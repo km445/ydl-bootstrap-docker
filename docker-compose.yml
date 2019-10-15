@@ -1,0 +1,45 @@
+version: "3.7"
+services:
+  rabbit:
+    image: km445/ydl-rabbitmq
+    restart: always
+    container_name: rabbit
+    hostname: rabbit
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+  redis:
+    image: 'redis:5'
+    restart: always
+    hostname: redis
+    container_name: redis
+    ports:
+      - '6379:6379'
+  celery_worker:
+    image: 'km445/ydl-celery'
+    restart: always
+    depends_on:
+      - rabbit
+      - redis
+    links:
+      - rabbit
+      - redis
+    command: bash -c 'celery -A proj worker --loglevel=info --concurrency=50 -Q io_bound --pool=gevent -n io_bound_worker@%h'
+    volumes:
+      - downloads:/usr/src/app/downloads
+  webapp:
+    image: 'km445/ydl-bootstrap'
+    hostname: webapp
+    ports:
+      - '5888:5888'
+      - '80:80'
+    restart: always
+    depends_on:
+      - rabbit
+      - celery_worker
+    links:
+      - rabbit
+    volumes:
+      - downloads:/usr/src/app/downloads
+volumes:
+  downloads:
