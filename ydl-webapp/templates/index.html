@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Index page{% endblock %}
+{% block content %}
+<form method="POST" class="was-validated form-inline mt-2 mb-2">
+  <label for="url" class="mb-2 col-md-2">URL:</label>
+  <input type="text" class="form-control mb-2 col-md-8" id="url" name="url" placeholder="Paste your youtube link here, e.g. https://www.youtube.com/watch?v=dP15zlyra3c" required>
+  <button type="submit" class="btn btn-primary mb-2 col-md-2">Submit</button>
+  <label for="format" class="col-md-2">Format:</label>
+  <div class="col-md-2">
+    <select name="format" class="form-control" id="format" required="true">
+    {% for format_type, format_values in formats.items() %}
+      <optgroup label="{{ format_type }}">
+        {% for format_val in format_values %}
+        <option value="{{ format_val }}" {% if format_val == default_audio_format %}selected{% endif %}>{{ format_val }}</option>
+        {% endfor %}
+      </optgroup>
+    {% endfor %}
+    </select>
+  </div>
+
+  <div class="col-md-2 form-group" id="video_height_container">
+    <select name="video_height" class="form-control" id="video_height">
+      {% for height in video_allowed_height.values() %}
+      <option value="{{ height }}" {% if height == default_video_height %}selected{% endif %}>{{ height + 'p'}}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-2 form-group" id="audio_bitrate_container">
+    <select name="audio_bitrate" class="form-control" id="audio_bitrate">
+      {% for bitrate in audio_allowed_bitrate.values() %}
+      <option value="{{ bitrate }}" {% if bitrate == default_audio_bitrate %}selected{% endif %}>{{ bitrate + 'KBit/s' }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <input type="hidden" name="format_type" value="audio">
+  <div class="col-md-6 form-group">
+    <label for="adjust_volume" class="mb-2 col-md-3">Adjust volume</label>
+    <input type="checkbox" class="form-control mb-2 col-md-2" name="adjust_volume" id="adjust_volume">
+    <label for="volume_factor" class="mb-2 col-md-3">Volume factor</label>
+    <input type="number" class="form-control mb-2 col-md-2" name="volume_factor" id="volume_factor" step="0.1" min="0" value="1">
+  </div>
+</form>
+<div class="row" id="disclaimer">
+  <div class="col-md-12 text-center">Adjust sound volume as necessary. Some sound quality can be lost due to transcoding. Volume factor less than 1 decreases volume and volume factor greater than 1 increases volume. <strong>Note that loud volume can damage hearing and will drain device battery faster.</strong>
+  </div>
+</div>
+<div class="row" id="feedback"></div>
+<div class="row" id="stats"></div>
+<div class="row" id="details"></div>
+
+{% endblock %}
+{% block javascript %}
+{{ super() }}
+<script type="text/javascript">
+  $(document).ready(function(){
+    $("select[name=format]").select2({placeholder: "Select a format", allowClear: true, width: '100%'});
+    $("select[name=video_height]").select2({placeholder: "Select video height", allowClear: true, width: '100%'});
+    $("select[name=audio_bitrate]").select2({placeholder: "Select audio bitrate", allowClear: true, width: '100%'});
+    $("#video_height_container").hide();
+    $("#disclaimer").hide();
+
+    $("#adjust_volume").change(function(){
+      if(this.checked){
+        $("#disclaimer").show();
+      } else {
+        $("#disclaimer").hide();
+      }
+    });
+
+    $("select[name=format]").change(function(){
+      $("input[name=format_type]").remove();
+      var format_type = $("select[name=format] option:selected").parent().attr("label");
+      $("form").append('<input type="hidden" name="format_type" value="' + format_type + '">');
+      if(format_type == "audio"){
+        $("#video_height_container").hide();
+        $("#audio_bitrate_container").show();
+      };
+      if(format_type == "video"){
+        $("#video_height_container").show();
+        $("#audio_bitrate_container").hide();
+      };
+    });
+
+    var namespace = "{{ namespace }}";
+    var socket = io.connect(location.protocol + "//" + document.domain + ":" + location.port + namespace);
+
+    socket.on("connect", function(){
+      //join a room once connected from client side
+      socket.emit("join_room", {});
+    });
+
+    socket.on("TASK_UPDATE", function(data){
+      if (data.status == "DOWNLOAD_PENDING"){
+        $("#stats").empty();
+        $("#details").empty();
+      };
+      if (data.status == "PROCESSING"){
+        if(data.extra.title || data.extra.thumbnail){
+          var wrapper = $('<div class="col-md-12 text-center"></div>');
+          var thumbnail = $('<div class="thumbnail"></div>')
+          if(data.extra.title){
+            thumbnail.append('<div class="caption" style="font-weight: bold;">' + data.extra.title + '</div>');
+          };
+          if(data.extra.thumbnail){
+            thumbnail.append('<img src="' + data.extra.thumbnail + '" alt="' + data.extra.title + '" style="width:75%" />');
+          };
+          wrapper.append(thumbnail);
+          $("#details").append(wrapper);
+        };
+        if(data.extra.dl_finished){
+          $("#feedback").empty().append('<div class="col-md-12 text-center">Request is processing.</div>');
+        };
+      };
+      if (data.status == "DOWNLOADING"){
+        $("#feedback").empty().append('<div class="col-md-12 text-center">Downloading</div>');
+        $("#stats").empty();
+        $("#stats").append('<div class="col-md-4 text-center">Download completed: ' + data.extra.percent_completed + '</div>');
+        $("#stats").append('<div class="col-md-4 text-center">Download speed: ' + data.extra.dl_speed + '</div>');
+        $("#stats").append('<div class="col-md-4 text-center">Download size: ' + data.extra.dl_size + '</div>');
+      };
+      if (data.status == "COMPLETED"){
+        $("button[type=submit]").removeAttr("disabled");
+        $("#feedback").empty().append('<div class="col-md-12 text-center">Please confirm the download if applicable and check your browser downloads.</div>');
+        window.location = "/results/" + data.task_id;
+      };
+      if (data.status == "ERROR"){
+        $("button[type=submit]").removeAttr("disabled");
+        $("#feedback").empty().append('<div class="col-md-12 text-center">' + data.error + '</div>');
+      };
+    });
+
+    $("button[type=submit]").click(function(e){
+      e.preventDefault();
+      $("button[type=submit]").attr("disabled", true);
+
+      $.ajax({type: "POST",
+              url: "/",
+              data: $("form").serialize(),
+              success: function(data){
+                var task_id = data.task_id;
+                $("#feedback").empty().append('<div class="col-md-12 text-center">Task id: ' + task_id + ' has been submitted.</div>');
+              },
+              error: function(data){
+                var task_id = data.task_id;
+                $("button[type=submit]").removeAttr("disabled");
+              },
+      });
+    });
+  });
+</script>
+{% endblock %}
